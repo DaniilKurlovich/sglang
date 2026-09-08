@@ -18,13 +18,9 @@ on:
           - "12.9.2"
         default: "13.0.3"
       docker_target:
-        description: "Dockerfile target stage (framework = dev image, runtime = slimmer prod image)"
-        required: true
-        type: choice
-        options:
-          - framework
-          - runtime
-        default: framework
+        description: "Dockerfile target stage (empty = build the Dockerfile as-is; 'framework'/'runtime' only for docker/Dockerfile)"
+        required: false
+        default: ""
       tag:
         description: "Image tag (default: branch name)"
         required: false
@@ -36,7 +32,7 @@ permissions:
 
 env:
   CUDA_VERSION: ${{ inputs.cuda_version || '13.0.3' }}
-  DOCKER_TARGET: ${{ inputs.docker_target || 'framework' }}
+  DOCKER_TARGET: ${{ inputs.docker_target || '' }}
   IMAGE_TAG: ${{ inputs.tag || github.ref_name }}
 
 concurrency:
@@ -78,8 +74,12 @@ jobs:
           set -euo pipefail
           # GHCR requires lowercase repository names
           IMAGE=$(echo "${IMAGE}" | tr '[:upper:]' '[:lower:]')
+          TARGET_ARG=""
+          if [ -n "${DOCKER_TARGET}" ]; then
+            TARGET_ARG="--target ${DOCKER_TARGET}"
+          fi
           docker buildx build \
-            --target ${DOCKER_TARGET} \
+            ${TARGET_ARG} \
             --platform linux/amd64 \
             -f docker/Dockerfile.vsa_h3_bench \
             --build-arg CUDA_VERSION=${CUDA_VERSION} \
@@ -88,8 +88,8 @@ jobs:
             --build-arg INSTALL_FLASHINFER_JIT_CACHE=1 \
             --build-arg CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
             --build-arg SGLANG_IMAGE_TAG=${IMAGE}:${IMAGE_TAG} \
-            --cache-from type=gha,scope=${CUDA_VERSION}-${DOCKER_TARGET} \
-            --cache-to type=gha,mode=max,scope=${CUDA_VERSION}-${DOCKER_TARGET} \
+            --cache-from type=gha,scope=${CUDA_VERSION}-${DOCKER_TARGET:-default} \
+            --cache-to type=gha,mode=max,scope=${CUDA_VERSION}-${DOCKER_TARGET:-default} \
             -t ${IMAGE}:${IMAGE_TAG} \
             --push \
             .
