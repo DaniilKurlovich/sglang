@@ -1,0 +1,66 @@
+# Minimal image for the VSA-H3 block-sparse attention Triton benchmark
+# (benchmark/vsa_h3/bench_vsa_h3_kernel.py), profiled by Nsight Compute.
+#
+# Nothing is compiled: the benchmark needs only torch + triton (bundled with
+# the torch cu130 wheel) and the pure-Triton kernel file, which imports
+# nothing else from sglang.
+#
+# Build (from the repo root):
+#   docker build -f docker/Dockerfile.vsa_h3_bench -t vsa-h3-bench .
+#
+# Run (GPU perf counters for `ncu --set full` need SYS_ADMIN or --privileged):
+#   docker run --rm --gpus all --cap-add SYS_ADMIN \
+#       -v "$(pwd)/reports:/workspace/reports" vsa-h3-bench
+#
+# Override benchmark args by appending them, e.g.:
+#   docker run ... vsa-h3-bench --seq-lens 8192 --topk 32 --ragged
+# The report is written to /workspace/reports/vsa_h3_full.ncu-rep inside the container.
+FROM nvidia/cuda:13.0.3-devel-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ncu comes from the CUDA apt repo already configured in the base image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-venv \
+        cuda-nsight-compute-13-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /opt/nvidia/nsight-compute/*/ncu /usr/local/bin/ncu \
+    && ncu --version
+
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+# torch cu130 wheel pulls in pytorch-triton; the benchmark needs nothing else.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu130
+
+WORKDIR /app
+
+# Stub package tree so the benchmark's
+#   from sglang.multimodal_gen.runtime.layers.attention.backends.vsa_h3_kernels import ...
+# resolves without installing sglang: the real package __init__ files pull in
+# torch/flashinfer/transformers stacks that this benchmark never uses.
+RUN mkdir -p sglang/multimodal_gen/runtime/layers/attention/backends benchmark/vsa_h3 \
+    && touch sglang/__init__.py \
+        sglang/multimodal_gen/__init__.py \
+        sglang/multimodal_gen/runtime/__init__.py \
+        sglang/multimodal_gen/runtime/layers/__init__.py \
+        sglang/multimodal_gen/runtime/layers/attention/__init__.py \
+        sglang/multimodal_gen/runtime/layers/attention/backends/__init__.py
+
+COPY python/sglang/multimodal_gen/runtime/layers/attention/backends/vsa_h3_kernels.py \
+     sglang/multimodal_gen/runtime/layers/attention/backends/vsa_h3_kernels.py
+COPY benchmark/vsa_h3/bench_vsa_h3_kernel.py benchmark/vsa_h3/bench_vsa_h3_kernel.py
+
+ENV PYTHONPATH=/app
+
+RUN mkdir -p /workspace/reports
+
+ENTRYPOINT ["ncu", "--set", "full", "--force-overwrite", \
+            "-k", "regex:_attn_fwd_sparse", "--launch-count", "8", \
+            "-o", "/workspace/reports/vsa_h3_full", \
+            "python", "benchmark/vsa_h3/bench_vsa_h3_kernel.py"]
+# Production shapes from the serving nsys trace (B=1 H=14 D=128):
+#   42752 seq (668 tiles),  topk 67  - per-GPU shard at tp=2/ulysses=2
+#   85504 seq (1336 tiles), topk 134 - no ulysses: full sequence on one GPU
+# Reference: 42752/67 = 4.05 ms ~= 324 TFLOPS (h3+sparse.sqlite, steady state).
+CMD ["--heads", "14", "--seq-lens", "42752", "85504", "--topk", "67", "134"]
