@@ -81,7 +81,7 @@ jobs:
           docker buildx build \
             --target ${DOCKER_TARGET} \
             --platform linux/amd64 \
-            -f docker/Dockerfile \
+            -f docker/Dockerfile.vsa_h3_bench \
             --build-arg CUDA_VERSION=${CUDA_VERSION} \
             --build-arg BUILD_TYPE=all \
             --build-arg BRANCH_TYPE=local \
