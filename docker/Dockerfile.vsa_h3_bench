@@ -1,9 +1,10 @@
 # Minimal image for the VSA-H3 block-sparse attention Triton benchmark
 # (benchmark/vsa_h3/bench_vsa_h3_kernel.py), profiled by Nsight Compute.
 #
-# Nothing is compiled: the benchmark needs only torch + triton (bundled with
-# the torch cu130 wheel) and the pure-Triton kernel file, which imports
-# nothing else from sglang.
+# Nothing is compiled at build time: the benchmark needs only torch + triton
+# (bundled with the torch cu130 wheel), numpy, and the pure-Triton kernel file,
+# which imports nothing else from sglang. python3-dev is required because
+# Triton compiles its CUDA driver stub (driver.c) at runtime with gcc.
 #
 # Build (from the repo root):
 #   docker build -f docker/Dockerfile.vsa_h3_bench -t vsa-h3-bench .
@@ -22,6 +23,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # ncu comes from the CUDA apt repo already configured in the base image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv \
+        python3-dev \
         cuda-nsight-compute-13-0 \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /opt/nvidia/nsight-compute/*/ncu /usr/local/bin/ncu \
@@ -30,8 +32,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
-# torch cu130 wheel pulls in pytorch-triton; the benchmark needs nothing else.
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu130
+# torch cu130 wheel pulls in pytorch-triton; the benchmark needs only numpy
+# on top (silences torch's "Failed to initialize NumPy" warning).
+RUN pip install --no-cache-dir torch numpy --index-url https://download.pytorch.org/whl/cu130
 
 WORKDIR /app
 
