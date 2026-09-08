@@ -53,12 +53,9 @@ COPY benchmark/vsa_h3/bench_vsa_h3_kernel.py benchmark/vsa_h3/bench_vsa_h3_kerne
 
 ENV PYTHONPATH=/app
 
-RUN mkdir -p /workspace/reports
+COPY --chmod=755 docker/run_vsa_h3_bench.sh /usr/local/bin/run_vsa_h3_bench.sh
 
-ENTRYPOINT ["ncu", "--set", "full", "--force-overwrite", \
-            "-k", "regex:_attn_fwd_sparse", "--launch-count", "8", \
-            "-o", "/workspace/reports/vsa_h3_full", \
-            "python", "benchmark/vsa_h3/bench_vsa_h3_kernel.py"]
+ENTRYPOINT ["run_vsa_h3_bench.sh"]
 # Production shapes from the serving nsys trace (B=1 H=14 D=128):
 #   42752 seq (668 tiles),  topk 67  - per-GPU shard at tp=2/ulysses=2
 #   85504 seq (1336 tiles), topk 134 - no ulysses: full sequence on one GPU
