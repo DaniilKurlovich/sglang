@@ -36,6 +36,11 @@ VSA_H3_KERNEL_BLOCK = 64
 # reports the same optimum for Blackwell.
 _ATTN_NUM_WARPS = 4
 _ATTN_NUM_STAGES = 5
+# Hopper (sm_90) has no TMEM: the fp32 accumulator lives in registers, and
+# 5 TMA stages of K/V tiles (~160KB smem) cap occupancy at 1 CTA/SM.
+# Fewer stages + more warps fit 2 CTAs/SM and halve per-thread registers.
+_ATTN_NUM_WARPS_HOPPER = 8
+_ATTN_NUM_STAGES_HOPPER = 3
 
 
 @triton.jit
@@ -129,6 +134,10 @@ def vsa_h3_block_sparse_attn_forward(
         TensorDescriptor.from_tensor(t, block_shape=block) for t in (q, k, v, out)
     )
     grid = (seq_q // VSA_H3_KERNEL_BLOCK, batch * heads, 1)
+    if torch.cuda.get_device_capability(q.device)[0] >= 10:  # Blackwell
+        num_warps, num_stages = _ATTN_NUM_WARPS, _ATTN_NUM_STAGES
+    else:  # Hopper
+        num_warps, num_stages = _ATTN_NUM_WARPS_HOPPER, _ATTN_NUM_STAGES_HOPPER
     _attn_fwd_sparse[grid](
         desc_q,
         desc_k,
@@ -144,8 +153,8 @@ def vsa_h3_block_sparse_attn_forward(
         HEAD_DIM=head_dim,
         BLOCK_M=VSA_H3_KERNEL_BLOCK,
         BLOCK_N=VSA_H3_KERNEL_BLOCK,
-        num_warps=_ATTN_NUM_WARPS,
-        num_stages=_ATTN_NUM_STAGES,
+        num_warps=num_warps,
+        num_stages=num_stages,
     )
     return out
 
