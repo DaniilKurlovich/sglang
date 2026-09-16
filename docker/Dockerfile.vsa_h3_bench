@@ -53,6 +53,8 @@ RUN mkdir -p sglang/multimodal_gen/runtime/layers/attention/backends benchmark/v
 COPY python/sglang/multimodal_gen/runtime/layers/attention/backends/vsa_h3_kernels.py \
      sglang/multimodal_gen/runtime/layers/attention/backends/vsa_h3_kernels.py
 COPY benchmark/vsa_h3/bench_vsa_h3_kernel.py benchmark/vsa_h3/bench_vsa_h3_kernel.py
+COPY minimax_h100_tune/bench_vsa_h3_attn.py benchmark/vsa_h3/bench_vsa_h3_attn.py
+
 
 ENV PYTHONPATH=/app
 
