@@ -4,8 +4,9 @@ MiniMax-H3 tile geometry (route A of plan/minimax_perf.md, item 1).
 
 What it does
 ------------
-1. Builds the per-step VSA-H3 metadata exactly like the denoising stage
-   (``VideoSparseAttentionH3MetadataBuilder.build``) for a given clip:
+1. Builds the per-step VSA-H3 metadata like the denoising stage does
+   (``vsa_h3_geometry.py`` is a standalone copy of the backend's builder,
+   cross-checked against the real one when sglang is importable) for a clip:
    frames x height x width -> latent -> (1, 2, 2) patches -> (4, 4, 4) tiles,
    plus segment-pure prefix tiles for text / condition / audio rows.
 2. Synthesizes packed q/k/v with a tunable amount of spatial locality so the
@@ -19,12 +20,12 @@ What it does
 
 Usage (GPU box, repo root, sglang importable)
 ---------------------------------------------
-  python minimax_h100_tune/bench_vsa_h3_attn.py                     # prod + variants, default geometry
-  python minimax_h100_tune/bench_vsa_h3_attn.py --sweep --warps 4,8 --stages 2,3,4,5
-  python minimax_h100_tune/bench_vsa_h3_attn.py --variants prod,v1:prefetch --check-tiles 256
-  python minimax_h100_tune/bench_vsa_h3_attn.py --dump /tmp/vsa_inputs.pt
+  python benchmark/vsa_h3/bench_vsa_h3_attn.py                     # prod + variants, default geometry
+  python benchmark/vsa_h3/bench_vsa_h3_attn.py --sweep --warps 4,8 --stages 2,3,4,5
+  python benchmark/vsa_h3/bench_vsa_h3_attn.py --variants prod,v1:prefetch --check-tiles 256
+  python benchmark/vsa_h3/bench_vsa_h3_attn.py --dump /tmp/vsa_inputs.pt
   ncu --set full -k regex:_attn_fwd_sparse -c 2 \
-      python minimax_h100_tune/bench_vsa_h3_attn.py --variants prod,v1:prefetch --ncu
+      python benchmark/vsa_h3/bench_vsa_h3_attn.py --variants prod,v1:prefetch --ncu
 
 Variant names
 -------------
@@ -60,14 +61,8 @@ import torch
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sglang.multimodal_gen.runtime.layers.attention.backends.video_sparse_attn_h3 import (  # noqa: E402
-    VSA_H3_TILE_ELEMS,
-    VSA_H3_TILE_SHAPE,
-    VideoSparseAttentionH3MetadataBuilder,
-    _compute_topk,
-    _get_workspace,
-    _select_kv_lists,
-)
+# Only the kernel file is taken from sglang (the docker image ships it under a
+# stub package tree); geometry / top-k / workspace come from the local shim.
 from sglang.multimodal_gen.runtime.layers.attention.backends.vsa_h3_kernels import (  # noqa: E402
     _attn_fwd_sparse,
     vsa_h3_block_sparse_attn_forward,
@@ -75,6 +70,15 @@ from sglang.multimodal_gen.runtime.layers.attention.backends.vsa_h3_kernels impo
 )
 
 import vsa_h3_variants  # noqa: E402
+from vsa_h3_geometry import (  # noqa: E402
+    VSA_H3_TILE_ELEMS,
+    VSA_H3_TILE_SHAPE,
+    Workspace,
+    compute_topk,
+    select_kv_lists,
+    verify_against_sglang,
+)
+from vsa_h3_geometry import build_meta as build_h3_meta  # noqa: E402
 
 BLOCK = VSA_H3_TILE_ELEMS  # 64
 TRACED_Q_TILES = 668  # grid.x of _attn_fwd_sparse in minimax_reports/h3+sparse.sqlite
@@ -118,16 +122,11 @@ def build_meta(args, device):
         # fill the audio segment so its tile count closes the gap (last tile ragged
         # like a real audio segment would be)
         audio_rows = max(0, need * BLOCK - (BLOCK - args.audio_tail)) if need else 0
-    meta = VideoSparseAttentionH3MetadataBuilder().build(
-        current_timestep=0,
-        raw_latent_shape=raw,
-        patch_size=patch,
-        VSA_sparsity=args.sparsity,
-        prefix_segments=(text_len, cond_rows, audio_rows),
-        device=device,
-        exempt=args.mode == "exempt",
-    )
+    segments = (text_len, cond_rows, audio_rows)
+    meta = build_h3_meta(raw, patch, args.sparsity, segments, device, exempt=args.mode == "exempt")
+    geometry_check = verify_against_sglang(meta, raw, patch, segments, device)
     info = dict(
+        geometry_vs_sglang=geometry_check,
         latent=raw,
         dit_seq_shape=dit_seq_shape,
         prefix_segments=(text_len, cond_rows, audio_rows),
@@ -179,14 +178,14 @@ def synth_packed_qkv(meta, info, heads, head_dim, locality, seed, device):
 
 def kernel_inputs(meta, q, k, v, sparsity):
     """Mirror forward_varlen: pack tiles, pooled scores, top-k lists."""
-    ws = _get_workspace(meta, q, has_gate=False)
+    ws = Workspace(meta, q.shape[1], q.shape[2], q.dtype, q.device)
     vsa_h3_pack_tiles(
         q, k, v, None, meta.pack_index, meta.variable_block_sizes, ws.tiled, ws.pooled
     )
     head_dim = q.shape[-1]
     q_pooled, k_pooled, _ = ws.pooled
     scores = torch.matmul(q_pooled, k_pooled.transpose(-2, -1)) * head_dim**-0.5
-    q2k_index, q2k_num = _select_kv_lists(ws, meta, scores, sparsity)
+    q2k_index, q2k_num = select_kv_lists(ws, meta, scores, sparsity)
     return dict(
         q=ws.tiled[0:1].contiguous(),
         k=ws.tiled[1:2].contiguous(),
@@ -219,7 +218,7 @@ def list_stats(inp, info):
     return dict(
         heads=heads,
         max_kv=idx.shape[-1],
-        keep=_compute_topk(ARGS.sparsity, info["num_video_tiles"]),
+        keep=compute_topk(ARGS.sparsity, info["num_video_tiles"]),
         video_row_width=width,
         avg_blocks_per_qtile=total_blocks / (heads * n_tiles),
         total_blocks=total_blocks,

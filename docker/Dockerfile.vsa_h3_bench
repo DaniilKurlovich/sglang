@@ -52,8 +52,11 @@ RUN mkdir -p sglang/multimodal_gen/runtime/layers/attention/backends benchmark/v
 
 COPY python/sglang/multimodal_gen/runtime/layers/attention/backends/vsa_h3_kernels.py \
      sglang/multimodal_gen/runtime/layers/attention/backends/vsa_h3_kernels.py
-COPY benchmark/vsa_h3/bench_vsa_h3_kernel.py benchmark/vsa_h3/bench_vsa_h3_kernel.py
-COPY minimax_h100_tune/bench_vsa_h3_attn.py benchmark/vsa_h3/bench_vsa_h3_attn.py
+# bench_vsa_h3_kernel.py (synthetic shapes, ncu entrypoint) and
+# bench_vsa_h3_attn.py (real H3 tile geometry via the local vsa_h3_geometry.py
+# shim, kernel variants in vsa_h3_variants.py) import only vsa_h3_kernels.py
+# from sglang plus each other.
+COPY benchmark/vsa_h3/*.py benchmark/vsa_h3/
 
 
 ENV PYTHONPATH=/app
