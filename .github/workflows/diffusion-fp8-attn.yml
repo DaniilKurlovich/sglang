@@ -12,7 +12,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "docker/diffusion-fp8-attn.Dockerfile*"
+      - "docker/diffusion-fp8-attn*"
       - "benchmark/diffusion_fp8_attn/**"
       - "python/sglang/kernels/ops/attention/fp8_fa_sm120/**"
       - "python/sglang/multimodal_gen/runtime/layers/attention/backends/fp8_fa_sm120_attn.py"

@@ -19,16 +19,23 @@ settings, or add registry credentials in RunPod (a GitHub token with `read:packa
 
 ## 2. Start a RunPod pod
 
+Create the pod from a blank custom template, not from a RunPod PyTorch template:
+a template keeps its own image and you end up in a different container.
+
 - GPU: RTX 4090, L40S or L4 for SM89; RTX 5090 or RTX PRO 6000 for SM120.
-- Container image: one of the tags above.
-- Leave the start command empty: the image runs `sleep infinity` so the pod stays up.
+- Container image: one of the tags above, owner name in lower case.
+- Container start command: leave empty. The image's start script keeps the pod up.
+- Expose TCP port 22 for SSH. RunPod passes the SSH key from your account settings as
+  `PUBLIC_KEY`; the start script adds it and starts sshd.
 - Attach a volume at `/workspace` if you will run the end-to-end comparison; model
   weights are large.
 
-Open a terminal in the pod. The checkout is in `/sgl-workspace/sglang`.
+Connect with the SSH command RunPod shows for the pod. The login shell starts in the
+checkout, `/sgl-workspace/sglang`, with the image's virtualenv active. Check that you
+are in the right container:
 
 ```bash
-cd /sgl-workspace/sglang
+echo $VIRTUAL_ENV          # /opt/venv
 nvidia-smi --query-gpu=name,compute_cap --format=csv
 ```
 

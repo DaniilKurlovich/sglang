@@ -2,6 +2,7 @@
 *
 !python/
 !benchmark/diffusion_fp8_attn/
+!docker/diffusion-fp8-attn-start.sh
 **/__pycache__
 **/*.pyc
 **/*.egg-info
