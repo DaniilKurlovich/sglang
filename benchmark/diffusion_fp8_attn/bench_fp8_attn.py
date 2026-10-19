@@ -371,13 +371,13 @@ def _find_video(out_dir, backend):
 
 
 def _read_frames(path):
-    import imageio.v3 as iio
+    """[frames, H, W, 3] uint8 RGB. PyAV directly: imageio's pyav plugin breaks on av 16."""
+    import av
+    import numpy as np
 
-    return iio.imread(path, plugin="pyav") if _has_pyav() else iio.imread(path)
-
-
-def _has_pyav():
-    return importlib.util.find_spec("av") is not None
+    with av.open(str(path)) as container:
+        frames = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
+    return np.stack(frames)
 
 
 def _video_quality(candidate_path, reference_path):
