@@ -1,0 +1,7 @@
+# Build context for docker/diffusion-fp8-attn.Dockerfile: only the sources it copies.
+*
+!python/
+!benchmark/diffusion_fp8_attn/
+**/__pycache__
+**/*.pyc
+**/*.egg-info
