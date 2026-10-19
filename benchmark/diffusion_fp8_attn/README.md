@@ -68,7 +68,10 @@ To compare with SageAttention, install it first (`pip install sageattention`).
 
 Runs `sglang generate` once per attention backend with the same seed and flags, then
 compares each video with the first backend's output. The defaults are the single
-RTX 4090 MiniMax-H3 recipe from `docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx`.
+RTX 4090 MiniMax-H3 recipe from `docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx`, with a
+`t2va` request at 1344x768 for 5 seconds (the cookbook's VBench shape). H3 rejects a
+request without a task, so the script passes `task`, `conditions` and `target` through
+`generate --config`; change them with `--request-json`.
 
 ```bash
 export HF_HOME=/workspace/hf
@@ -84,7 +87,7 @@ Add `sage_attn` to `--backends` only after installing SageAttention. Use
 ```bash
 python benchmark/diffusion_fp8_attn/bench_fp8_attn.py e2e \
   --backends fa,fp8_fa_sm120 \
-  --generate-args "--model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers --num-inference-steps 10 --num-frames 17 --height 480 --width 832" \
+  --generate-args "--model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers" --request-json '' \
   --out-dir /workspace/results/e2e-wan
 ```
 
@@ -93,7 +96,5 @@ first backend, and aggregate and worst-frame SSIM / PSNR. The pass column uses t
 video thresholds from the diffusion performance guide: SSIM 0.92 and PSNR 24 dB.
 Each backend's log and perf report are in `<out-dir>/<backend>/`.
 
-Known issue: on an L4 the `fp8_fa_sm120` run of Wan2.1-T2V-1.3B failed while loading the
-transformer weights (`Tensor.item() cannot be called on meta tensors`), before any
-attention call; the `fa` run of the same command worked. Check
-`<out-dir>/fp8_fa_sm120/generate.log` if you hit it.
+The H3 weights for the `fl2va` partition are about 144 GB; keep `HF_HOME` on the
+`/workspace` volume.

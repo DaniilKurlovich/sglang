@@ -54,6 +54,14 @@ DEFAULT_GENERATE_ARGS = (
     "--enable-torch-compile false"
 )
 DEFAULT_PROMPT = "A cat walking on a sunny beach, gentle waves."
+# H3 requests need a task; same shape as the cookbook's VBench request (1344x768, 5 s).
+DEFAULT_REQUEST_JSON = json.dumps(
+    {
+        "task": "t2va",
+        "conditions": [],
+        "target": {"short_edge": 768, "aspect_ratio": "16:9", "duration_seconds": 5.0},
+    }
+)
 FALLBACK_LOG_PATTERN = re.compile(r"fp8_fa_sm120 attention: (.+?); using cuDNN SDPA")
 
 
@@ -281,6 +289,12 @@ def run_op(args):
 
 
 def _generate_command(*, backend, args, out_dir):
+    config_args = []
+    if args.request_json:
+        # generate copies a config file's sampling fields (task, target, ...) into the request.
+        config_path = out_dir / "request.json"
+        config_path.write_text(json.dumps(json.loads(args.request_json), indent=2))
+        config_args = ["--config", str(config_path)]
     return [
         sys.executable,
         "-c",
@@ -301,6 +315,7 @@ def _generate_command(*, backend, args, out_dir):
         f"{backend}.mp4",
         "--perf-dump-path",
         str(out_dir / "perf.json"),
+        *config_args,
     ]
 
 
@@ -495,6 +510,11 @@ def _build_parser():
     )
     e2e.add_argument("--generate-args", default=DEFAULT_GENERATE_ARGS)
     e2e.add_argument("--prompt", default=DEFAULT_PROMPT)
+    e2e.add_argument(
+        "--request-json",
+        default=DEFAULT_REQUEST_JSON,
+        help="extra sampling fields passed through generate --config; '' for none",
+    )
     e2e.add_argument("--seed", type=int, default=42)
     e2e.add_argument(
         "--skip-steps",
