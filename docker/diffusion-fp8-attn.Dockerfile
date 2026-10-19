@@ -4,10 +4,12 @@
 # extensions. The CUDA devel base matches docker/Dockerfile: a full generation
 # JIT-compiles FlashInfer kernels on first use, which needs nvcc.
 #
+# The default command keeps the container alive, so a RunPod pod does not restart it;
+# run the tests and benchmarks from a shell (benchmark/diffusion_fp8_attn/README.md).
+#
 #   docker build -f docker/diffusion-fp8-attn.Dockerfile -t sglang-diffusion-fp8 .
-#   docker run --rm --gpus all sglang-diffusion-fp8                      # unit tests
-#   docker run --rm --gpus all sglang-diffusion-fp8 \
-#       python benchmark/diffusion_fp8_attn/bench_fp8_attn.py op         # operator bench
+#   docker run --rm --gpus all sglang-diffusion-fp8 python -m pytest -q \
+#       python/sglang/multimodal_gen/test/unit/test_fp8_fa_sm120_attn.py
 ARG CUDA_VERSION=13.0.3
 ARG PYTHON_VERSION=3.12
 
@@ -37,5 +39,4 @@ COPY benchmark/diffusion_fp8_attn ./benchmark/diffusion_fp8_attn
 ENV SGLANG_BUILD_RUST_EXTS=none
 RUN uv pip install --no-cache -e "./python[diffusion]" pytest
 
-CMD ["python", "-m", "pytest", "-v", "-rs", "-p", "no:cacheprovider", \
-     "python/sglang/multimodal_gen/test/unit/test_fp8_fa_sm120_attn.py"]
+CMD ["sleep", "infinity"]

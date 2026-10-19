@@ -1,11 +1,14 @@
-name: Diffusion FP8 Attention (SM89 / SM120)
+name: Diffusion FP8 Attention Image
 
 # Builds the diffusion attention test image (docker/diffusion-fp8-attn.Dockerfile)
-# and, on manual dispatch, runs the fp8_fa_sm120 unit tests, the operator benchmark
-# and optionally the end-to-end backend comparison on a GPU runner you name.
+# and pushes it to GHCR, to run on a rented SM89 / SM120 GPU (for example RunPod).
+# See benchmark/diffusion_fp8_attn/README.md for the run commands.
 # Pull requests only check that the image builds.
 
 on:
+  push:
+    branches:
+      - "diffusion/fp8-fa-sm89*"
   pull_request:
     branches: [main]
     paths:
@@ -17,27 +20,6 @@ on:
       - "python/sglang/multimodal_gen/test/unit/test_fp8_fa_sm120_attn.py"
       - ".github/workflows/diffusion-fp8-attn.yml"
   workflow_dispatch:
-    inputs:
-      gpu_runner:
-        description: "Runner label with an SM89 or SM120 GPU, Docker and the NVIDIA container toolkit (empty: build only)"
-        required: false
-        type: string
-        default: ""
-      run_e2e:
-        description: "Also run the end-to-end backend comparison (downloads the model; needs HF_TOKEN for gated repos)"
-        required: false
-        type: boolean
-        default: false
-      op_args:
-        description: "Arguments for bench_fp8_attn.py op"
-        required: false
-        type: string
-        default: "--heads 56,14 --seqs 2048,4096,8192,16384,20440,30272,60000"
-      e2e_args:
-        description: "Arguments for bench_fp8_attn.py e2e (empty: the script's 1x RTX 4090 MiniMax-H3 defaults)"
-        required: false
-        type: string
-        default: ""
 
 concurrency:
   group: diffusion-fp8-attn-${{ github.ref }}
@@ -52,10 +34,11 @@ jobs:
     permissions:
       contents: read
       packages: write
-    outputs:
-      image: ${{ steps.tag.outputs.image }}
+    env:
+      # Pull requests (often from forks) cannot push, so they only build.
+      PUSH: ${{ github.event_name != 'pull_request' }}
     steps:
-      # The image carries torch, cutlass-dsl and the diffusion extra (~15 GB unpacked).
+      # The image carries the CUDA toolkit, torch and the diffusion extra.
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be
         with:
@@ -65,92 +48,45 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Compute image tag
-        id: tag
-        run: echo "image=${IMAGE,,}:${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - name: Compute image tags
+        id: tags
+        run: |
+          image="${IMAGE,,}"
+          branch="${GITHUB_REF_NAME//\//-}"
+          {
+            echo "tags<<EOF"
+            echo "${image}:${GITHUB_SHA::12}"
+            echo "${image}:${branch}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: github.event_name == 'workflow_dispatch'
+        if: env.PUSH == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pull requests (often from forks) cannot push, so they only build.
-      - name: Build image
+      - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/diffusion-fp8-attn.Dockerfile
-          push: ${{ github.event_name == 'workflow_dispatch' }}
-          tags: ${{ steps.tag.outputs.image }}
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha,scope=diffusion-fp8-attn
           cache-to: type=gha,mode=max,scope=diffusion-fp8-attn
 
-  gpu-test:
-    needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.gpu_runner != ''
-    runs-on: ${{ inputs.gpu_runner }}
-    timeout-minutes: 180
-    permissions:
-      contents: read
-      packages: read
-    env:
-      IMAGE_REF: ${{ needs.build.outputs.image }}
-      RESULTS: ${{ github.workspace }}/fp8-attn-results
-      # Passed through the environment and split with shlex, never pasted into the script.
-      OP_ARGS: ${{ inputs.op_args }}
-      E2E_ARGS: ${{ inputs.e2e_args }}
-    steps:
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull image and show the GPU
+      - name: Print image reference
+        if: env.PUSH == 'true'
         run: |
-          docker pull "$IMAGE_REF"
-          mkdir -p "$RESULTS"
-          # A self-hosted runner keeps the previous run's root-owned results.
-          docker run --rm -v "$RESULTS:/results" "$IMAGE_REF" sh -c 'rm -rf /results/*'
-          docker run --rm --gpus all "$IMAGE_REF" python -c \
-            "import torch; p = torch.cuda.get_device_properties(0); print(p.name, f'sm_{p.major}{p.minor}')"
-
-      - name: Run fp8_fa_sm120 unit tests
-        run: docker run --rm --gpus all "$IMAGE_REF"
-
-      - name: Run operator benchmark
-        run: |
-          mapfile -d '' args < <(python3 -c 'import os, shlex, sys; sys.stdout.write("\0".join(shlex.split(os.environ["OP_ARGS"])))')
-          docker run --rm --gpus all -v "$RESULTS:/results" "$IMAGE_REF" \
-            python benchmark/diffusion_fp8_attn/bench_fp8_attn.py op \
-            "${args[@]}" --json /results/op.json \
-            | tee "$RESULTS/op.md"
-
-      - name: Run end-to-end backend comparison
-        if: inputs.run_e2e
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          mapfile -d '' args < <(python3 -c 'import os, shlex, sys; sys.stdout.write("\0".join(shlex.split(os.environ["E2E_ARGS"])))')
-          mkdir -p "$HOME/.cache/huggingface"
-          docker run --rm --gpus all --ipc=host \
-            -e HF_TOKEN \
-            -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
-            -v "$RESULTS:/results" "$IMAGE_REF" \
-            python benchmark/diffusion_fp8_attn/bench_fp8_attn.py e2e \
-            --out-dir /results/e2e "${args[@]}" \
-            | tee "$RESULTS/e2e.md"
-
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diffusion-fp8-attn-results-${{ github.run_attempt }}
-          path: fp8-attn-results
+          {
+            echo "### Image"
+            echo '```'
+            echo "${{ steps.tags.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

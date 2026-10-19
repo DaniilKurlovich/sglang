@@ -16,7 +16,7 @@ Two modes, both run on the current GPU:
         the first backend's output (aggregate and worst-frame SSIM / PSNR).
 
             python benchmark/diffusion_fp8_attn/bench_fp8_attn.py e2e \
-                --backends fa,fp8_fa_sm120,sage_attn --out-dir /tmp/h3-e2e
+                --backends fa,fp8_fa_sm120 --out-dir /tmp/h3-e2e
 
         The default generate flags are the single-RTX-4090 MiniMax-H3 recipe from
         docs/cookbook/diffusion/MiniMax/MiniMax-H3.mdx; override them with --generate-args.
@@ -490,7 +490,7 @@ def _build_parser():
     )
     e2e.add_argument(
         "--backends",
-        default=f"fa,{FP8_BACKEND},{SAGE_BACKEND}",
+        default=f"fa,{FP8_BACKEND}",
         help="the first one is the quality and speed baseline",
     )
     e2e.add_argument("--generate-args", default=DEFAULT_GENERATE_ARGS)
